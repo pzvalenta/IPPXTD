@@ -1,6 +1,19 @@
 #!/usr/bin/php
 <?php
 
+
+// globalni promenne
+$columns;
+$group;
+$relations;
+$input_stream;
+$output_stream;
+$header_text;
+$columns_max;
+
+
+
+
 get_opts($argv);
 
 function get_opts($argv){
@@ -19,7 +32,11 @@ function get_opts($argv){
     $opts = getopt($options, $longopts);
 
 
-    global $columns = 0, $group = 0, $relations = 0, $input_stream, $output_stream, $header_text, $columns_max = -1;
+    global $columns, $group, $relations, $input_stream, $output_stream, $header_text, $columns_max;
+    $columns = $group = $relations = 0;
+    $columns_max = -1;
+
+    $input_file = $output_file = "";
 
     foreach($opts as $key => $value){
       switch ($key){
@@ -40,7 +57,7 @@ function get_opts($argv){
               break;
 
           case "input":
-              $input_file = $value
+              $input_file = $value;
               break;
 
           case "output":
@@ -55,41 +72,42 @@ function get_opts($argv){
               $columns_max = intval($value);
               if(!is_int($columns_max)) print_error("--etc value is not int" , 1);
               break;
+
+          default:
+              print_error("unknown parameter: " . $key, 1);
+              break;
       }
     }
 
     // overime konflikt argumentu
-    if($columns_max && $group) print_error("--etc cannot be set with -b", 1);
+    if($columns_max && $group) print_error("--etc cannot be set alongside -b", 1);
 
     // overime vstupni a vystupni soubory
     if($input_file){
-      $input_stream = fopen($input_file);
+      if(!is_readable($input_file)) print_error("input file not readable", 2);
+      if(!file_exists($input_file)) print_error("input file nonexistent", 2);
+      if(($input_stream = fopen($input_file, "r")) === false) print_error("can't open input file", 2);
     } else {
       $input_stream = STDIN;
     }
 
     if($output_file){
-      fopen(
+      if($input_file && ($input_file === $output_file)) print_error("ouput file identical with input file", 2);
+      if(($output_stream = fopen($output_file, "w")) === false) print_error("can't open output file", 2);
     } else {
       $output_stream = STDOUT;
     }
-
-
-
-
-
-    var_dump($opts);
 }
 
 
 
 function print_help(){
-  echo("HELP,\nTODO TODO TODO\nTODO TODO TODO \nTODO TODO TODO\n")
+  echo("HELP,\nTODO TODO TODO\nTODO TODO TODO \nTODO TODO TODO\n");
   exit(0);
 }
 
 function print_error($text, $code){
-  echo("ERROR " . $code . " : " . $text)
+  echo("ERROR " . $code . " : " . $text);
   exot($code);
 }
 
