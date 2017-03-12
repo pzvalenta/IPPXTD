@@ -11,6 +11,15 @@ $output_stream;
 $header_text;
 $columns_max;
 
+$types = array(
+  "NA"  => 0,
+  "BIT" => "BIT",
+  "INT" => "INT",
+  "FLOAT" => "FLOAT",
+  "NVARCHAR" => "NVARCHAR",
+  "NTEXT" => "NTEXT",
+);
+
 
 
 
@@ -35,7 +44,7 @@ function generate_unlimited(){
 
 
 function recursive_print_children($parent, $depth){
-  global $tables;
+  global $types, $tables;
   $new_table = new table;
 
   //////////////////////////// pomocny kod
@@ -43,29 +52,40 @@ function recursive_print_children($parent, $depth){
     if($i === $depth - 1) echo("|___");
     else echo("\t");
   }
-  echo($parent->getName() . "( ");
+  echo($parent->getName());
+
+  //if (get_type($parent) !== $types["NA"]){
+  //  echo(" contents: " . trim($parent));
+  //}
+
+  echo(" ( ");
   foreach ($parent->attributes() as $attribute) {
     echo($attribute->getName()." ");
   }
   echo(")\n");
   ///////////////////////////
 
+  if (get_type($parent) === $types["NA"]){ // nema textovy obsah
+    foreach($parent->attributes() as $attribute){
+      $type = get_type($attribute);
+      if ($type === "NTEXT") $type = "NVARCHAR";
+      if ($type === "NA") $type = "BIT";
+      $new_table->addAttribute($attribute->getName(), $type);
+    }
 
-
-  foreach($parent->attributes() as $attribute){
-    $new_table->addAttribute($attribute->getName(), "PLACEHOLDER INT");
+    foreach($parent->children() as $child){
+      $new_table->addSubelement($child->getName(), "INT");
+      recursive_print_children($child, $depth + 1);
+    }
+  } else {   // ma textovy obsah - nemusime resit podelementy
+    $new_table->addAttribute("value", get_type($parent));
   }
 
-  foreach($parent->children() as $child){
-    $new_table->addSubelement($child->getName(), "PLACEHOLDER INT");
-    recursive_print_children($child, $depth + 1);
-  }
 
   if (!isset($tables[$parent->getName()])){
     $new_table->setName($parent->getName());
     $tables[$parent->getName()] = $new_table;
   } else {
-    // TODO
     // porovnat tabulky, sloucit je
     merge_tables($new_table, $tables[$parent->getName()]);
   }
@@ -78,6 +98,39 @@ function print_tables($tables){
   }
 }
 
+function get_type($str){
+  global $types;
+  $str = mb_strtolower(trim($str), 'UTF-8');
+
+  if ($str === '') return $types["NA"];
+  if (is_bool(filter_var($str, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE))) return $types["BIT"];
+  if (is_int(filter_var($str, FILTER_VALIDATE_INT))) return $types["INT"];
+  if (is_float(filter_var($str, FILTER_VALIDATE_FLOAT))) return $types["FLOAT"];
+
+  return $types["NTEXT"]; // pokud je to atribut, melo by to byt NVARCHAR
+}
+
+function compare_types($type1, $type2){
+  if ($type1 === 0) return $type2;
+  if ($type2 === 0) return $type1;
+
+  if ($type1 === "BIT") return $type2;
+  if ($type2 === "BIT") return $type1;
+
+  if ($type1 === "INT") return $type2;
+  if ($type2 === "INT") return $type1;
+
+  if ($type1 === "FLOAT") return $type2;
+  if ($type2 === "FLOAT") return $type1;
+
+  if ($type1 === "NVARCHAR") return $type2;
+  if ($type2 === "NVARCHAR") return $type1;
+
+  if ($type1 === "NTEXT") return "NTEXT";
+  if ($type2 === "NTEXT") return "NTEXT";
+
+  print_error("fatal type comparison error", 100);
+}
 
 
 class table {
@@ -140,7 +193,9 @@ class table {
 function merge_tables($table1, $table2){
   foreach ($table1->attributes as $name1 => $type1) {
     if (isset($table2->attributes[$name1])){
-      // TODO check type
+      if ($table2->attributes[$name1] !== $type1) {
+        $table2->attributes[$name1] = compare_types($type1, $table2->attributes[$name1]);
+      }
     } else {
       $table2->attributes[$name1] = $type1;
     }
@@ -148,7 +203,9 @@ function merge_tables($table1, $table2){
 
   foreach ($table1->subelements as $name1 => $type1) {
     if (isset($table2->subelements[$name1])){
-      // TODO check type
+      if ($table2->subelements[$name1] !== $type1) {
+        $table2->subelements[$name1] = compare_types($type1, $table2->subelements[$name1]);
+      }
     } else {
       $table2->subelements[$name1] = $type1;
     }
