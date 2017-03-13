@@ -10,44 +10,37 @@ $relations;
 $output_stream;
 $header_text;
 $columns_max;
-
-$types = array(
-  "NA"  => 0,
-  "BIT" => "BIT",
-  "INT" => "INT",
-  "FLOAT" => "FLOAT",
-  "NVARCHAR" => "NVARCHAR",
-  "NTEXT" => "NTEXT",
-);
-
-
-
-
+$elements = array();
 
 get_opts($argv);
-
-echo("><><><><><><><><><><test1><><><><><><><><><><\n");
+//echo("><><><><><><><><><><test1><><><><><><><><><><\n");
 generate_unlimited();
-echo("><><><><><><><><><><test2><><><><><><><><><><\n");
-
+//echo("><><><><><><><><><><test2><><><><><><><><><><\n");
 fclose($output_stream);
 exit(0); //TODO
 
 function generate_unlimited(){
-  global $tables, $xml, $columns, $group, $relations, $output_stream, $header_text, $columns_max;
+  global $elements, $xml, $columns, $group, $relations, $output_stream, $header_text, $columns_max;
 
-  $tables = array();
-  recursive_print_children($xml, 0);
 
-  print_tables($tables);
+  foreach ($xml->children() as $child) { // preskocim korenovy element
+    recursive_load_elements($child, 0, "");
+  }
+
+  if($columns_max != -1) check_max($elements, $columns_max);
+
+  print_tables($elements);
 }
 
 
-function recursive_print_children($parent, $depth){
-  global $types, $tables;
+
+/*
+function recursive_print_children($element, $depth, $parent){
+  global $tables;
   $new_table = new table;
 
   //////////////////////////// pomocny kod
+  /*
   for($i = 0; $i < $depth; $i++){
     if($i === $depth - 1) echo("|___");
     else echo("\t");
@@ -63,51 +56,57 @@ function recursive_print_children($parent, $depth){
     echo($attribute->getName()." ");
   }
   echo(")\n");
+  */
   ///////////////////////////
-
-  if (get_type($parent) === $types["NA"]){ // nema textovy obsah
-    foreach($parent->attributes() as $attribute){
+/*
+  if (!get_type($element)){ // nema textovy obsah
+    foreach($element->attributes() as $attribute){
       $type = get_type($attribute);
       if ($type === "NTEXT") $type = "NVARCHAR";
       if ($type === "NA") $type = "BIT";
       $new_table->addAttribute($attribute->getName(), $type);
     }
-
-    foreach($parent->children() as $child){
+    foreach($element->children() as $child){
       $new_table->addSubelement($child->getName(), "INT");
       recursive_print_children($child, $depth + 1);
     }
   } else {   // ma textovy obsah - nemusime resit podelementy
-    $new_table->addAttribute("value", get_type($parent));
+    $new_table->addAttribute("value", get_type($element));
   }
 
 
-  if (!isset($tables[$parent->getName()])){
-    $new_table->setName($parent->getName());
-    $tables[$parent->getName()] = $new_table;
+  if (!isset($tables[$element->getName()])){
+    $new_table->setName($element->getName());
+    $new_table->setParent($parent);
+    $tables[$element->getName()] = $new_table;
   } else {
     // porovnat tabulky, sloucit je
-    merge_tables($new_table, $tables[$parent->getName()]);
+    merge_tables($new_table, $tables[$element->getName()]);
   }
 
 }
+*/
 
-function print_tables($tables){
-  foreach ($tables as $table) {
-    $table->print_table();
+function print_tables($elements){
+  global $header_text, $output_stream;
+  if ($header_text){
+      fprintf($output_stream, "--" . $header_text . "\n\n");
+  }
+
+  foreach ($elements as $element) {
+    $element->print_element();
   }
 }
 
 function get_type($str){
-  global $types;
   $str = mb_strtolower(trim($str), 'UTF-8');
 
-  if ($str === '') return $types["NA"];
-  if (is_bool(filter_var($str, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE))) return $types["BIT"];
-  if (is_int(filter_var($str, FILTER_VALIDATE_INT))) return $types["INT"];
-  if (is_float(filter_var($str, FILTER_VALIDATE_FLOAT))) return $types["FLOAT"];
+  if ($str === '') return 0;
+  if (is_bool(filter_var($str, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE))) return "BIT";
+  if (is_int(filter_var($str, FILTER_VALIDATE_INT))) return "INT";
+  if (is_float(filter_var($str, FILTER_VALIDATE_FLOAT))) return "FLOAT";
 
-  return $types["NTEXT"]; // pokud je to atribut, melo by to byt NVARCHAR
+  return "NTEXT"; // pokud je to atribut, melo by to byt NVARCHAR
 }
 
 function compare_types($type1, $type2){
@@ -132,7 +131,187 @@ function compare_types($type1, $type2){
   print_error("fatal type comparison error", 100);
 }
 
+function recursive_load_elements($element, $depth, $parent){
+  global $elements;
 
+  $new_element = new element;
+
+  if (!get_type($element)){ // nema textovy obsah
+    foreach($element->attributes() as $attribute){
+      $type = get_type($attribute);
+      if ($type === "NTEXT") $type = "NVARCHAR";
+      if ($type === "NA") $type = "BIT";
+      $new_element->add_attribute($attribute->getName(), $type);
+    }
+    foreach($element->children() as $child){
+      $new_element->add_child($child->getName());
+      recursive_load_elements($child, $depth + 1, $element->getName());
+    }
+  } else {   // ma textovy obsah - nemusime resit podelementy
+    $new_element->set_type(get_type($element));
+  }
+
+
+  if (!isset($elements[$element->getName()])){
+    $new_element->set_name($element->getName());
+    $new_element->set_parent($parent);
+    $elements[$element->getName()] = $new_element;
+  } else {
+    // porovnat tabulky, sloucit je
+    merge_elements($new_element, $elements[$element->getName()]);
+  }
+}
+
+class element {
+  public $name = "";
+  public $parent = "";
+  public $children = array();
+  public $attributes = array();
+  public $type = "NA";
+
+  // vrati name
+  public function get_name(){
+    return $this->name;
+  }
+
+  // nastavi name
+  public function set_name($text){
+
+    $this->name = mb_strtolower($text, 'UTF-8');
+  }
+
+  // vrati type
+  public function get_type(){
+    return $this->type;
+  }
+
+  // nastavi type
+  public function set_type($text){
+    if(isset($this->attributes["value"])){
+      $this->type = compare_types($this->attributes["value"], $text);
+      unset($this->attributes["value"]);
+    } else {
+      $this->type = $text;
+    }
+  }
+
+  // vrati parent
+  public function get_parent(){
+    return $this->parent;
+  }
+
+  // nastavi parent
+  public function set_parent($text){
+    $this->parent = mb_strtolower($text, 'UTF-8');
+  }
+
+  // zkontroluje kolize a prida atribut
+  public function add_attribute($name, $type){
+    $name = mb_strtolower($name, 'UTF-8');
+    if ($name === "value" && $this->type !== "NA"){
+      $this->type = compare_types($this->type, $type);
+    }
+
+    if (isset($this->attributes[$name])){
+      $this->attributes[$name] = compare_types($this->attributes[$name], $type);
+    }
+
+    //if (isset($this->children[$name])) print_error("attribute and subelement name colision", 90);
+
+    $this->attributes[$name] = $type;
+  }
+
+  // zkontroluje kolize a prida child/subelement
+
+  public function add_child($name){
+    $name = mb_strtolower($name, 'UTF-8');
+
+    if (!isset($this->children[$name])){
+      $this->children[$name] = 1;
+      if (isset($this->attributes[$name . "_id"]))
+        print_error("attribute and subelement name colision", 90);
+    } else {
+      $this->children[$name] += 1;
+      if (isset($this->attributes[$name . $this->children[$name] . "_id"]) || isset($this->attributes[$name . $this->children[$name] - 1 . "_id"]))
+        print_error("attribute and subelement name colision", 90);
+    }
+  }
+
+
+  public function print_element(){
+    global $output_stream, $columns, $group;
+    fprintf($output_stream, "CREATE TABLE ". $this->name . "(\n");
+    fprintf($output_stream, "\tprk_" . $this->name . "_id INT PRIMARY KEY");
+
+    if ($this->type !== "NA"){
+      fprintf($output_stream, ",\n");
+      fprintf($output_stream, "\t" . "value" . " " . $this->type);
+    }
+
+    if (!$columns){ // neni nastaven parametr -a, vytvari se sloupce z atributu
+      foreach ($this->attributes as $name => $type) {
+        fprintf($output_stream, ",\n");
+        fprintf($output_stream, "\t" . $name . " " . $type);
+      }
+    }
+
+    foreach ($this->children as $name => $count) {
+      if ($count === 1 || $group){  //$group == zapnuty -b
+        fprintf($output_stream, ",\n");
+        fprintf($output_stream, "\t" . $name . "_id INT");
+      } else {
+        for($i = 1; $i <= $count; $i++){
+          fprintf($output_stream, ",\n");
+          fprintf($output_stream, "\t" . $name . $i . "_id INT");
+        }
+      }
+    }
+    fprintf($output_stream, "\n");
+    fprintf($output_stream, ");\n\n");
+  }
+
+
+}
+
+// proveri, zda se dodrzuje columns_max a pripadne provede zmeny
+function check_max($elements, $columns_max){
+  foreach ($elements as $el_name => $element) {
+    foreach ($element->children as $child_name => $count) {
+      if($count > $columns_max){
+        $elements[$child_name]->add_attribute($el_name . "_id", "INT");
+        unset($element->children[$child_name]);
+      }
+    }
+  }
+}
+
+// mergne do element2
+function merge_elements($element1, $element2){
+  if($element2->type !== $element1->type)
+    $element2->set_type(compare_types($element1->type, $element2->type));
+
+  foreach ($element1->attributes as $name1 => $type1) {
+    if (isset($element2->attributes[$name1])){
+      if ($element2->attributes[$name1] !== $type1) {
+        $element2->attributes[$name1] = compare_types($type1, $element2->attributes[$name1]);
+      }
+    } else {
+      $element2->attributes[$name1] = $type1;
+    }
+  }
+
+  foreach ($element1->children as $name1 => $count1) {
+    if (isset($element2->children[$name1])){
+      if ($element2->children[$name1] < $count1){
+        $element2->children[$name1] = $count1;
+      }
+    } else {
+      $element2->children[$name1] = $count1;
+    }
+  }
+}
+
+/*
 class table {
   public $name = "";
   public $subelements = array();
@@ -155,42 +334,55 @@ class table {
   }
 
   public function addSubelement($name, $type){
-    if (isset($this->attributes[$name . "_id"])) print_error("attribute and subelemnt name colision", 90);
+    if (isset($this->attributes[$name . "_id"])) print_error("attribute and subelement name colision", 90);
 
-    if (isset($this->subelements[$name . "_id"])){
-      $this->subelements[$name . "1_id"] = $this->subelements[$name . "_id"];
-      unset($this->subelements[$name . "_id"]);
-      $this->subelements[$name . "2_id"] = $type;
-    } elseif (isset($this->subelements[$name . "1_id"])) {
-      $i = 2;
-      for($i; isset($this->subelements[$name . $i . "_id"]); $i++){}
-      $this->subelements[$name . $i . "_id"] = $type;
+    if(!isset($this->subelements[$name])){
+      $this->subelements[$name] = array();
+      $this->subelements[$name][$name . "_id"] = $type;
     } else {
-      $this->subelements[$name . "_id"] = $type;
+      if (isset($this->subelements[$name][$name . "_id"])){
+        $this->subelements[$name][$name . "1_id"] = $this->subelements[$name][$name . "_id"];
+        unset($this->subelements[$name][$name . "_id"]);
+        $this->subelements[$name][$name . "2_id"] = $type;
+      } else {
+        echo($this->attributes[$name][$name . "_id"] . "\n");
+        $i = 2;
+        for($i; isset($this->subelements[$name][$name . $i . "_id"]); $i++){}
+        $this->subelements[$name][$name . $i . "_id"] = $type;
+      }
     }
-
   }
 
+
   public function print_table(){
-    echo("CREATE TABLE " . $this->name . "(\n");
-    echo("\t$this->primary_key");
+    global $output_stream, $columns_max;
+
+    fprintf($output_stream, "CREATE TABLE ". $this->name . "(\n");
+    fprintf($output_stream, "\t$this->primary_key");
+
     foreach ($this->attributes as $name => $type) {
-      echo(",\n");
-      echo("\t" . $name . " " . $type);
+      fprintf($output_stream, ",\n");
+      fprintf($output_stream, "\t" . $name . " " . $type);
     }
 
-    foreach ($this->subelements as $name => $type) {
-      echo(",\n");
-      echo("\t" . $name . " " . $type);
+    foreach ($this->subelements as $key => $array) {
+      if($columns_max == -1 || $columns_max >= count($array)){
+        foreach($array as $name => $type){
+          fprintf($output_stream, ",\n");
+          fprintf($output_stream, "\t" . $name . " " . $type);
+        }
+      }
     }
 
-    echo("\n");
-    echo(");\n\n");
+    fprintf($output_stream, "\n");
+    fprintf($output_stream, ");\n\n");
   }
 }
 
+
+
 // sloucit tabulku1 do tabulky2
-function merge_tables($table1, $table2){
+function merge_tables($table1, $table2){ //TODO nemerguju parent
   foreach ($table1->attributes as $name1 => $type1) {
     if (isset($table2->attributes[$name1])){
       if ($table2->attributes[$name1] !== $type1) {
@@ -211,10 +403,7 @@ function merge_tables($table1, $table2){
     }
   }
 }
-
-function stronger_type($type1, $type2){
-  return "PLACEHOLDER TYPE";
-}
+*/
 
 
 function get_opts($argv){
@@ -281,7 +470,7 @@ function get_opts($argv){
     }
 
     // overim konflikt argumentu
-    if($columns_max && $group) print_error("--etc cannot be set alongside -b", 1);
+    if($columns_max !== -1 && $group) print_error("--etc cannot be set alongside -b", 1);
 
     // overim vstupni soubor
     if($input_file){
@@ -310,7 +499,7 @@ function print_help(){
 }
 
 function print_error($text, $code){
-  fwrite(STDERR, "ERROR " . $code . ": " . $text . "\n");
+  fprintf(STDERR, "ERROR " . $code . ": " . $text . "\n");
   exit($code);
 }
 
