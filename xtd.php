@@ -1,7 +1,6 @@
 #!/usr/bin/php
 <?php
 
-
 // globalni promenne
 $xml;
 $columns;
@@ -12,81 +11,32 @@ $header_text;
 $columns_max;
 $elements = array();
 
+///hlavni cast programu
+mb_internal_encoding( 'UTF-8' );
 get_opts($argv);
-//echo("><><><><><><><><><><test1><><><><><><><><><><\n");
-generate_unlimited();
-//echo("><><><><><><><><><><test2><><><><><><><><><><\n");
+generate();
 fclose($output_stream);
-exit(0); //TODO
+exit(0);
+// konec hlavni casti programu
 
-function generate_unlimited(){
+
+// hlavni funkce
+function generate(){
   global $elements, $xml, $columns, $group, $relations, $output_stream, $header_text, $columns_max;
 
-
   foreach ($xml->children() as $child) { // preskocim korenovy element
-    recursive_load_elements($child, 0, "");
+    recursive_load_elements($child, 0, ""); //zpracuje xml do $elements
   }
 
-  if($columns_max != -1) check_max($elements, $columns_max);
-
-  print_tables($elements);
+  if ($relations) // pokud -g tiskne xml s relacemi
+    print_relations(create_relations($elements), $output_stream);
+  else{ // jinak tiskne DDL tabulky
+    if($columns_max != -1) check_max($elements, $columns_max); // proveri a opravi --etc
+    print_tables($elements);
+  }
 }
 
-
-
-/*
-function recursive_print_children($element, $depth, $parent){
-  global $tables;
-  $new_table = new table;
-
-  //////////////////////////// pomocny kod
-  /*
-  for($i = 0; $i < $depth; $i++){
-    if($i === $depth - 1) echo("|___");
-    else echo("\t");
-  }
-  echo($parent->getName());
-
-  //if (get_type($parent) !== $types["NA"]){
-  //  echo(" contents: " . trim($parent));
-  //}
-
-  echo(" ( ");
-  foreach ($parent->attributes() as $attribute) {
-    echo($attribute->getName()." ");
-  }
-  echo(")\n");
-  */
-  ///////////////////////////
-/*
-  if (!get_type($element)){ // nema textovy obsah
-    foreach($element->attributes() as $attribute){
-      $type = get_type($attribute);
-      if ($type === "NTEXT") $type = "NVARCHAR";
-      if ($type === "NA") $type = "BIT";
-      $new_table->addAttribute($attribute->getName(), $type);
-    }
-    foreach($element->children() as $child){
-      $new_table->addSubelement($child->getName(), "INT");
-      recursive_print_children($child, $depth + 1);
-    }
-  } else {   // ma textovy obsah - nemusime resit podelementy
-    $new_table->addAttribute("value", get_type($element));
-  }
-
-
-  if (!isset($tables[$element->getName()])){
-    $new_table->setName($element->getName());
-    $new_table->setParent($parent);
-    $tables[$element->getName()] = $new_table;
-  } else {
-    // porovnat tabulky, sloucit je
-    merge_tables($new_table, $tables[$element->getName()]);
-  }
-
-}
-*/
-
+// tisk DDL
 function print_tables($elements){
   global $header_text, $output_stream;
   if ($header_text){
@@ -98,6 +48,7 @@ function print_tables($elements){
   }
 }
 
+// vrati typ dat reprezentovanych ve stringu $str
 function get_type($str){
   $str = mb_strtolower(trim($str), 'UTF-8');
 
@@ -105,13 +56,13 @@ function get_type($str){
   if (is_bool(filter_var($str, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE))) return "BIT";
   if (is_int(filter_var($str, FILTER_VALIDATE_INT))) return "INT";
   if (is_float(filter_var($str, FILTER_VALIDATE_FLOAT))) return "FLOAT";
-
   return "NTEXT"; // pokud je to atribut, melo by to byt NVARCHAR
 }
 
+// porovna typy a vrati "silnejsi"
 function compare_types($type1, $type2){
-  if ($type1 === 0) return $type2;
-  if ($type2 === 0) return $type1;
+  if ($type1 === 0 || $type1 == "NA") return $type2;
+  if ($type2 === 0 || $type2 == "NA") return $type1;
 
   if ($type1 === "BIT") return $type2;
   if ($type2 === "BIT") return $type1;
@@ -131,17 +82,22 @@ function compare_types($type1, $type2){
   print_error("fatal type comparison error", 100);
 }
 
+// nacte xml elementy, jejich atributy, vnitrni text a podelementy
 function recursive_load_elements($element, $depth, $parent){
-  global $elements;
+  global $elements, $columns;
 
   $new_element = new element;
+  $new_element->set_name($element->getName());
+  $new_element->set_parent($parent);
 
   if (!get_type($element)){ // nema textovy obsah
-    foreach($element->attributes() as $attribute){
-      $type = get_type($attribute);
-      if ($type === "NTEXT") $type = "NVARCHAR";
-      if ($type === "NA") $type = "BIT";
-      $new_element->add_attribute($attribute->getName(), $type);
+    if (!$columns){
+      foreach($element->attributes() as $attribute){
+        $type = get_type($attribute);
+        if ($type === "NTEXT") $type = "NVARCHAR";
+        if ($type === "NA") $type = "BIT";
+        $new_element->add_attribute($attribute->getName(), $type);
+      }
     }
     foreach($element->children() as $child){
       $new_element->add_child($child->getName());
@@ -149,19 +105,25 @@ function recursive_load_elements($element, $depth, $parent){
     }
   } else {   // ma textovy obsah - nemusime resit podelementy
     $new_element->set_type(get_type($element));
+    if (!$columns){
+      foreach($element->attributes() as $attribute){
+        $type = get_type($attribute);
+        if ($type === "NTEXT") $type = "NVARCHAR";
+        if ($type === 0) $type = "BIT";
+        $new_element->add_attribute($attribute->getName(), $type);
+      }
+    }
   }
 
-
-  if (!isset($elements[$element->getName()])){
-    $new_element->set_name($element->getName());
-    $new_element->set_parent($parent);
-    $elements[$element->getName()] = $new_element;
+  if (!isset($elements[mb_strtolower($new_element->get_name(), 'UTF-8')])){
+    $elements[$new_element->get_name()] = $new_element;
   } else {
     // porovnat tabulky, sloucit je
-    merge_elements($new_element, $elements[$element->getName()]);
+    merge_elements($new_element, $elements[$new_element->get_name()]);
   }
 }
 
+// trida reprezentujici element
 class element {
   public $name = "";
   public $parent = "";
@@ -188,8 +150,12 @@ class element {
   // nastavi type
   public function set_type($text){
     if(isset($this->attributes["value"])){
-      $this->type = compare_types($this->attributes["value"], $text);
+      $text = compare_types($this->attributes["value"], $text);
       unset($this->attributes["value"]);
+    }
+
+    if($this->type != "NA"){
+      $this->type = compare_types($this->type, $text);
     } else {
       $this->type = $text;
     }
@@ -210,19 +176,12 @@ class element {
     $name = mb_strtolower($name, 'UTF-8');
     if ($name === "value" && $this->type !== "NA"){
       $this->type = compare_types($this->type, $type);
-    }
-
-    if (isset($this->attributes[$name])){
+    } else if (isset($this->attributes[$name])){
       $this->attributes[$name] = compare_types($this->attributes[$name], $type);
-    }
-
-    //if (isset($this->children[$name])) print_error("attribute and subelement name colision", 90);
-
-    $this->attributes[$name] = $type;
+    } else $this->attributes[$name] = $type;
   }
 
   // zkontroluje kolize a prida child/subelement
-
   public function add_child($name){
     $name = mb_strtolower($name, 'UTF-8');
 
@@ -237,7 +196,7 @@ class element {
     }
   }
 
-
+//tiskne DDL pro vytvoreni tabulky
   public function print_element(){
     global $output_stream, $columns, $group;
     fprintf($output_stream, "CREATE TABLE ". $this->name . "(\n");
@@ -269,9 +228,9 @@ class element {
     fprintf($output_stream, "\n");
     fprintf($output_stream, ");\n\n");
   }
-
-
 }
+// konec tridy element
+
 
 // proveri, zda se dodrzuje columns_max a pripadne provede zmeny
 function check_max($elements, $columns_max){
@@ -285,11 +244,8 @@ function check_max($elements, $columns_max){
   }
 }
 
-// mergne do element2
+// mergne element 1 do element2
 function merge_elements($element1, $element2){
-  if($element2->type !== $element1->type)
-    $element2->set_type(compare_types($element1->type, $element2->type));
-
   foreach ($element1->attributes as $name1 => $type1) {
     if (isset($element2->attributes[$name1])){
       if ($element2->attributes[$name1] !== $type1) {
@@ -299,6 +255,9 @@ function merge_elements($element1, $element2){
       $element2->attributes[$name1] = $type1;
     }
   }
+
+  if($element2->type !== $element1->type)
+    $element2->set_type(compare_types($element1->type, $element2->type));
 
   foreach ($element1->children as $name1 => $count1) {
     if (isset($element2->children[$name1])){
@@ -311,101 +270,156 @@ function merge_elements($element1, $element2){
   }
 }
 
-/*
-class table {
-  public $name = "";
-  public $subelements = array();
-  public $attributes = array();
-  public $primary_key;
 
-  public function getName(){
-    return $this->name;
-  }
+// vytvori xml relations
+function create_relations($elements){
+  global $columns_max, $group;
+  $relations = array();
 
-  public function setName($text){
-    $this->name = $text;
-    $this->primary_key = "prk_" . $text . "_id INT PRIMARY KEY";
-  }
+  // vytvori se vztah mezi kazdym rodicem a ditem v $elements. pokud je nastavene --etc a rodic ma vice deti, nastavuje se vztah opacny
+  foreach ($elements as $parent) {
+    foreach ($elements[$parent->get_name()]->children as $child => $count) {
+      if (($columns_max === -1 && $group === 0) || $columns_max !== -1 && $columns_max >= $count){
+        $relations[$parent->get_name()][$child] = "X";
+      }
+      else if ($group){
+        $relations[$parent->get_name()][$child] = "X";
+      }
+    }
 
-  public function addAttribute($name, $type){
-    if (isset($this->attributes[$name . "_id"])) print_error("attribute name colision", 90);
-    // TODO je toto chyba?
-    $this->attributes[$name] = $type;
-  }
-
-  public function addSubelement($name, $type){
-    if (isset($this->attributes[$name . "_id"])) print_error("attribute and subelement name colision", 90);
-
-    if(!isset($this->subelements[$name])){
-      $this->subelements[$name] = array();
-      $this->subelements[$name][$name . "_id"] = $type;
-    } else {
-      if (isset($this->subelements[$name][$name . "_id"])){
-        $this->subelements[$name][$name . "1_id"] = $this->subelements[$name][$name . "_id"];
-        unset($this->subelements[$name][$name . "_id"]);
-        $this->subelements[$name][$name . "2_id"] = $type;
-      } else {
-        echo($this->attributes[$name][$name . "_id"] . "\n");
-        $i = 2;
-        for($i; isset($this->subelements[$name][$name . $i . "_id"]); $i++){}
-        $this->subelements[$name][$name . $i . "_id"] = $type;
+    foreach ($elements as $element) {
+      foreach ($elements[$element->get_name()]->children as $ckey => $count) {
+        if($columns_max !== -1 && $columns_max < $count && $ckey == $parent->get_name()){
+          $relations[$parent->get_name()][$element->get_name()] = "X";
+        }
       }
     }
   }
 
+  // kazda tabulka ma sama se sebou relaci 1:1
+  // (a) Pokud a = b, pak R(a, b) = 1:1
+  foreach ($elements as $element) {
+    $relations[$element->get_name()][$element->get_name()] = "1:1";
+  }
 
-  public function print_table(){
-    global $output_stream, $columns_max;
-
-    fprintf($output_stream, "CREATE TABLE ". $this->name . "(\n");
-    fprintf($output_stream, "\t$this->primary_key");
-
-    foreach ($this->attributes as $name => $type) {
-      fprintf($output_stream, ",\n");
-      fprintf($output_stream, "\t" . $name . " " . $type);
+  // nastavi se hodnoty vztahu
+  foreach ($relations as $parent => $pvalue) {
+    foreach ($relations[$parent] as $child => $cvalue) {
+      $relations[$parent][$child] = get_relationship($relations, $parent, $child);
     }
+  }
 
-    foreach ($this->subelements as $key => $array) {
-      if($columns_max == -1 || $columns_max >= count($array)){
-        foreach($array as $name => $type){
-          fprintf($output_stream, ",\n");
-          fprintf($output_stream, "\t" . $name . " " . $type);
+  // vztahy plati pro oba smery, pokud existuje R(a,b), pak R(b,a) bude mit opacnou hodnotu
+  foreach ($relations as $parent => $pvalue) {
+    foreach ($relations[$parent] as $child => $cvalue) {
+        if($relations[$parent][$child] === "N:M") {
+          $relations[$child][$parent] = "N:M";
+        }
+        else if($relations[$parent][$child] === "1:N") {
+            $relations[$child][$parent] = "N:1";
+        } else if($relations[$parent][$child] === "N:1") {
+          $relations[$child][$parent] = "1:N";
+        }
+    }
+  }
+
+
+  // tranzitivita vztahu 1:N a N:1
+  $change = TRUE;
+  while($change) {
+    $change = FALSE;
+    foreach ($relations as $a => $avalue){
+        foreach ($relations[$a] as $c => $cvalue){
+            if($relations[$a][$c] == "1:N" || $relations[$a][$c] == "N:1"){
+              // POKUD ∃c ∈ T : R(a, c) = 1:N,  /  ∃c ∈ T : R(a, c) = N:1,
+
+                foreach ($relations[$c] as $b => $bvalue){
+
+                    if($relations[$c][$b] == $relations[$a][$c]){
+                      //  R(c, b) = 1:N   /           R(c, b) = N:1
+
+                        if(!isset($relations[$a][$b])){
+                          // ∀a, b ∈ T,  R(a, b) = ε
+
+                            $relations[$a][$b] = $relations[$c][$b];
+                            // PAK R(a, b) = 1:N  / R(a, b) = N:1
+                            $change = TRUE;
+                        }
+                    }
+                }
+            }
         }
       }
     }
 
-    fprintf($output_stream, "\n");
-    fprintf($output_stream, ");\n\n");
+    // tranzitivita vztahu N:M
+    $change = TRUE;
+    while($change) {
+      $change = FALSE;
+      foreach ($relations as $a => $avalue) {
+        foreach ($relations[$a] as $c => $cvalue) {
+          //∃c ∈ T : R(a, c) != ε
+
+            foreach ($relations[$c] as $b => $bvalue) {
+              //R(c, b) != ε
+
+                if(!isset($relations[$a][$b])) {
+                  // ∀a, b ∈ T,  R(a, b) = ε
+
+                    $relations[$a][$b] = "N:M";
+                    $relations[$b][$a] = "N:M";
+                    //R(a, b) = R(b, a) = N:M
+                    $change = TRUE;
+                }
+            }
+        }
+      }
+    }
+
+    return $relations;
+}
+
+// vraci hodnotu vztahu mezi parent a child podle toho, zda jsou inicializovane [$parent][$child] a [$child][$parent]
+function get_relationship($relations, $parent, $child){
+  if ($parent === $child) return "1:1";  // (a) Pokud a = b, pak R(a, b) = 1:1.
+
+  if (isset($relations[$parent][$child])){
+    if (isset($relations[$child][$parent])){
+      return "N:M";  //(b) Pokud a 6 = b, a → b a b → a, pak R(a, b) = N:M
+    } else return "N:1"; // (c) Pokud a 6 = b, a → b a neplatí b → a, pak R(a, b) = N:1
+  } else if (isset($relations[$child][$parent])){
+    return "1:N"; //(d) Pokud a 6 = b, b → a a neplatí a → b, pak R(a, b) = 1:N
+  } else {
+    return "1:1"; // (e) Jinak R(a, b) = ε.
   }
 }
 
-
-
-// sloucit tabulku1 do tabulky2
-function merge_tables($table1, $table2){ //TODO nemerguju parent
-  foreach ($table1->attributes as $name1 => $type1) {
-    if (isset($table2->attributes[$name1])){
-      if ($table2->attributes[$name1] !== $type1) {
-        $table2->attributes[$name1] = compare_types($type1, $table2->attributes[$name1]);
-      }
-    } else {
-      $table2->attributes[$name1] = $type1;
-    }
-  }
-
-  foreach ($table1->subelements as $name1 => $type1) {
-    if (isset($table2->subelements[$name1])){
-      if ($table2->subelements[$name1] !== $type1) {
-        $table2->subelements[$name1] = compare_types($type1, $table2->subelements[$name1]);
-      }
-    } else {
-      $table2->subelements[$name1] = $type1;
+/*
+// pomocna funkce
+function helpprint($relations){
+  foreach ($relations as $parent => $pvalue) {
+    echo($parent . " =>\n");
+    foreach ($relations[$parent] as $child => $cvalue) {
+      echo("\t" . $child . " = " . $cvalue . "\n");
     }
   }
 }
 */
 
+// tiskne relations na output_stream v predepsanem formatu
+function print_relations($relations, $output_stream){
+  fprintf($output_stream, "<tables>\n");
+  foreach ($relations as $parent_name => $child) {
+    fprintf($output_stream, "\t<table name=\"" . $parent_name . "\">\n");
+    foreach($child as $child_name => $rel){
+      fprintf($output_stream, "\t\t<relation to=\"" . $child_name . "\" relation_type=\"" . $rel . "\"/>\n");
+    }
+    fprintf($output_stream, "\t</table>\n");
+  }
+  fprintf($output_stream, "</tables>\n");
+}
 
+// nacte predane parametry programu do globalnich promennych + resi konflikty
 function get_opts($argv){
     $options = "a";  // negenerovat sloupce z atributu     - $columns
     $options .= "b"; // sloucit podelementy stejneho nazvu - $group
@@ -419,14 +433,22 @@ function get_opts($argv){
       "etc:",        // maximalni pocet sloupcu            - $columns_max
     );
 
-    $opts = getopt($options, $longopts);
+    unset($argv[0]);
 
+    foreach($argv as $argument){ // overeni zda nebyly predany neplatne argumenty
+      if ( (strpos($argument, "--help") === FALSE) && (strpos($argument, "--input=") === FALSE) && (strpos($argument, "--output=") === FALSE) &&
+           (strpos($argument, "--header=") === FALSE) && (strpos($argument, "--etc=") === FALSE) && !preg_match('/(^-[abg]+)/', $argument) )
+           print_error("wrong parameter" . $argument . ", try calling --help", 1);
+    }
+
+    $opts = getopt($options, $longopts);
 
     global $xml, $columns, $group, $relations, $output_stream, $header_text, $columns_max;
     $columns = $group = $relations = 0;
     $columns_max = -1;
+    $help = 0;
 
-    $input_file = $output_file = "";
+    $input_file = $output_file = $header_text = "";
 
     foreach($opts as $key => $value){
       switch ($key){
@@ -439,11 +461,11 @@ function get_opts($argv){
               break;
 
           case "g":
-              if($value === FALSE) $relations = 1;
+              if($value === FALSE) $relations = 1; // vim ze je toto pojmenovani matouci, vzhledem k tomu, ze se jmenuje relations uz i pole, ale neni cas
               break;
 
           case "help":
-              if($value === FALSE) print_help();
+              if($value === FALSE) $help = 1;
               break;
 
           case "input":
@@ -472,6 +494,11 @@ function get_opts($argv){
     // overim konflikt argumentu
     if($columns_max !== -1 && $group) print_error("--etc cannot be set alongside -b", 1);
 
+    if ($help && ($group || $columns_max != -1 || $relations || $columns || $input_file != ""
+                    || $output_file != "" || $header != "" )) print_error("--help set alnogside other parameter", 1);
+    else if ($help) print_help();
+
+
     // overim vstupni soubor
     if($input_file){
       if(!is_readable($input_file)) print_error("input file not readable", 2);
@@ -484,24 +511,32 @@ function get_opts($argv){
 
     // overim vystupni soubor
     if($output_file){
-      if($input_file && ($input_file === $output_file)) print_error("ouput file identical with input file", 2);
-      if(($output_stream = fopen($output_file, "w")) === false) print_error("can't open output file", 2);
+      if($input_file && ($input_file === $output_file)) print_error("ouput file identical with input file", 3);
+      if(($output_stream = fopen($output_file, "w")) === false) print_error("can't open output file", 3);
     } else {
       $output_stream = STDOUT;
     }
 }
 
 
-
+// vypise help a ukonci program
 function print_help(){
-  echo("HELP,\nTODO TODO TODO\nTODO TODO TODO \nTODO TODO TODO\n");
+  echo("IPP XTD HELP:\n");
+  echo("--help            - prints this\n");
+  echo("--input=filenime  - sets input file, otherwise STDIN\n");
+  echo("--output=filenime - sets output file, otherwise STDOUT\n");
+  echo("--header=text     - prepends 'text' as a header to the output\n");
+  echo("--etc=n           - (n >= 0) max. no. of columns made from namesake elements\n");
+  echo("-a                - prevents generation of columns from attributes\n");
+  echo("-b                - groups namesake elements into one column\n");
+  echo("-g                - changes output to xml with relations\n");
   exit(0);
 }
 
+// vypise error a ukonci program
 function print_error($text, $code){
   fprintf(STDERR, "ERROR " . $code . ": " . $text . "\n");
   exit($code);
 }
-
 
 ?>
